@@ -1,0 +1,104 @@
+clc
+clear all
+% close all
+
+groupID = {'test_jatin_'};
+%pre12 = {'_pre_1'};
+
+ for subType = 1;
+ for subID = [1:11 13];
+     
+
+snirf = SnirfLoad([groupID{subType} sprintf('%02d',subID)  '.snirf']);%and pre_2
+
+[groupID{subType} sprintf('%02d',subID) ]
+
+procResult.mlActMan{1} = ones(size(snirf.GetMeasList,1),1);
+procResult.tInc{1}= ones(size(snirf.Get_t,1),1);
+
+mlActAuto = hmrR_PruneChannels(snirf.data, snirf.probe ,procResult.mlActMan , procResult.tInc, [1e-04  1e+0 ], 2, [0.0 40.0]);
+% mlActAuto = hmrR_PruneChannels(data, probe, mlActMan, tInc, dRange, SNRthresh, SDrange)
+
+dod = hmrR_Intensity2OD( snirf.data );
+
+nSV = 0.0;
+[dod3, svs, nSV] = hmrR_PCAFilter( dod, mlActAuto, procResult.tInc, nSV );
+dod2 = hmrR_BandpassFilt(dod3, 0.0, 0.5);
+
+tMotion = 0.5;% Units of seconds.    Typical value ranges from 0.1 to 0.5.
+tMask = 1; %Units of seconds. Typical value ranges from 0.5 to 1
+STDEVthresh = 30;
+AMPthresh =  1;
+procResult.tIncAuto = hmrR_MotionArtifact(dod2, snirf.probe, procResult.mlActMan, mlActAuto, procResult.tInc, tMotion, tMask, STDEVthresh, AMPthresh);
+
+tRange =[-5 5];
+[procResult.stim, tRange] = hmrR_StimRejection(dod2, snirf.stim, procResult.tIncAuto, procResult.tInc, tRange);
+
+[tInc,tIncCh] = hmrR_MotionArtifactByChannel(dod2, snirf.probe, procResult.mlActMan, mlActAuto, procResult.tInc, tMotion, tMask, STDEVthresh, AMPthresh);
+
+p = 0.99;
+dod4 = hmrR_MotionCorrectSpline(dod2, procResult.mlActMan, tIncCh, p);
+
+dc = hmrR_OD2Conc( dod4, snirf.probe, [6.1 5.1] );
+
+% data - this is the concentration data with dimensions #time points x [HbO/HbR/HbT] x #channels
+% stim - stimulation vector (# time points x #conditions)=1 at stim onset otherwise =0
+% probe - source detector stucture (units should be consistent with rhoSD_ssThresh)
+procResult.mlActAuto = mlActAuto;
+procResult.Aaux = [];
+rcMap = [];%snirf.aux;
+trange = [-2 15]; 
+glmSolveMethod = 2;
+idxBasis = 2;
+paramsBasis = [0.1 3.0 1.8 3.0];%[0.1 3.0 1.8 3.0];
+rhoSD_ssThresh = 25 ;
+flagNuisanceRMethod = 1;
+driftOrder = 3;
+c_vector = [0];
+
+
+%[yavg, ~, tHRF] = hmrR_GLM_old(dc, procResult.stim, snirf.probe, procResult.mlActAuto, procResult.Aaux, procResult.tInc,   rcMap, trange, glmSolveMethod, idxBasis, paramsBasis, rhoSD_ssThresh, flagNuisanceRMethod, driftOrder, c_vector);
+%                 hmrR_GLM_old(data_y, stim,        probe,                  mlActAuto,              Aaux,           tIncAuto, rcMap, trange, glmSolveMethod, idxBasis, paramsBasis, rhoSD_ssThresh, flagNuisanceRMethod, driftOrder, c_vector)
+[dcAvg, dcAvgStd, nTrials, dcNew, dcResid, dcSum2, beta, R, hmrstats] = hmrR_GLM(dc, procResult.stim, snirf.probe, procResult.mlActAuto, procResult.Aaux, procResult.tIncAuto, rcMap, trange, glmSolveMethod, idxBasis, paramsBasis, rhoSD_ssThresh, flagNuisanceRMethod, driftOrder, c_vector);
+% [data_yavg, data_yavgstd, nTrials, data_ynew, data_yresid, data_ysum2, beta_blks, yR_blks, hmrstats] = ...
+% hmrR_GLM(data_y, stim, probe, mlActAuto, Aaux, tIncAuto, rcMap, trange, glmSolveMethod, idxBasis, paramsBasis, rhoSD_ssThresh, flagNuisanceRMethod, driftOrder, c_vector)
+
+result = dcAvg.GetDataTimeSeries('reshape');
+%dcAvg.GetDataTimeSeries('reshape');
+
+
+ROI_left = [10 16 24 29];
+ROI_right = [13 20 31 39];
+
+
+X = squeeze(beta{1}(1,1,ROI_left,:)) ; 
+X(X==0)=NaN;
+
+Y = squeeze(beta{1}(1,1,ROI_right,:)) ; 
+Y(Y==0)=NaN;
+
+IPS_CON_Low{subID} = nanmean([X(:,1)' Y(:,5)']) * 1000000 ;
+CONTRA_CON_Low{subID} = nanmean([X(:,5)' Y(:,1)']) * 1000000 ;
+IPS_CON_High{subID} = nanmean([X(:,3)' Y(:,7)']) * 1000000 ;
+CONTRA_CON_High{subID} = nanmean([X(:,7)' Y(:,3)']) * 1000000 ;
+
+IPS_IN_Low{subID} = nanmean([X(:,2)' Y(:,6)']) * 1000000 ;
+CONTRA_IN_Low{subID} = nanmean([X(:,6)' Y(:,2)']) * 1000000 ;
+IPS_IN_High{subID} = nanmean([X(:,4)' Y(:,8)']) * 1000000 ;
+CONTRA_IN_High{subID} = nanmean([X(:,8)' Y(:,4)']) * 1000000 ;
+
+
+
+end
+end
+
+%%
+   IPS_CON_LOW = cell2mat(IPS_CON_Low);
+   IPS_CON_HIGH = cell2mat(IPS_CON_High);
+   IPS_IN_LOW = cell2mat(IPS_IN_Low);
+   IPS_IN_HIGH = cell2mat(IPS_IN_High);
+   
+   CONTRA_CON_LOW = cell2mat(CONTRA_CON_Low);
+   CONTRA_CON_HIGH = cell2mat(CONTRA_CON_High);
+   CONTRA_IN_LOW = cell2mat(CONTRA_IN_Low);
+   CONTRA_IN_HIGH = cell2mat(CONTRA_IN_High);
